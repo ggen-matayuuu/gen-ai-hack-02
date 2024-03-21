@@ -203,7 +203,7 @@ def get_file_data(gcs_uri: str):
 
 # history (会話履歴) を作成
 def query_message(history: str, image: str) -> str:
-    user_text = "猫ちゃん！盛り付けの評価をしてください！"
+    user_text = "料理チェックおねがします！"
     try:
         # ユーザーのクエリがテキストのみの場合
         if not (image):
@@ -268,7 +268,14 @@ def gemini_response(history: str, image_file_path: str, text:str) -> str:
 
         for k, correct_image in enumerate(res_execute_vector_search_query['base_file_path'], start=1):
 
-            print(f"正解画像 [{k}位]: {correct_image.split('/')[4]}")
+            print(f"正解画像 [{k}位]: {correct_image.split('/')[4]}()")
+            print(res_execute_vector_search_query['distance'][k-1])
+
+        # 距離が 0.45 以上離れている画像しかヒットしなかった場合
+        if res_execute_vector_search_query['distance'][0] >= 0.45:
+            response = "画像がヒットしないので、撮り直してくれるかにゃん！"
+            history += [(None,response)]
+            return history
 
         # 正解の画像 URL
         correct_image_gcs_uri = res_execute_vector_search_query['base_file_path'][0]
@@ -352,7 +359,7 @@ def gemini_response(history: str, image_file_path: str, text:str) -> str:
 
 
         # 一言目を追加（検索結果）
-        bot_1st_text = f"""あなたが作った料理に近しいのはこれだにゃ！
+        bot_1st_text = f"""あなたが作った料理はこれにゃん？
         料理名：{correct_food_menu}"""
         image_extension = get_extension(correct_image_gcs_uri)
         base64 = gcs_file_to_base64(correct_image_gcs_uri)
@@ -386,7 +393,7 @@ with gr.Blocks(css=".gradio-container {background-color: #00CED1;}") as app:
             bubble_full_width=False,
         )
     with gr.Row():
-        image_box = gr.Image(type="filepath", sources=["upload", "webcam"], scale = 1)
+        image_box = gr.Image(type="filepath", sources=["upload"], scale = 1)
         print(f'image_box: {image_box}')
 
     with gr.Row():
