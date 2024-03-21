@@ -1,25 +1,32 @@
 import base64
 import logging
 import os
-import sys
-from typing import Optional, Union, List
-from io import BytesIO
-
-import google.cloud.logging
-from google.cloud import storage
-import gradio as gr
-import vertexai
-from vertexai.preview.generative_models import GenerativeModel, Part, GenerationConfig, GenerationResponse
-from PIL import Image as PIL_Image
 import random
+import sys
 import time
-from gradio.data_classes import FileData
+from io import BytesIO
+from typing import List, Optional, Union
+
+import gradio as gr
+import pandas as pd
+from google.cloud import bigquery
+from google.cloud import storage
+import google.cloud.logging
+from PIL import Image as PIL_Image
+import vertexai
+from vertexai.preview.generative_models import (
+    GenerativeModel,
+    GenerationConfig,
+    GenerationResponse,
+    Part,
+)
+from vertexai.vision_models import (
+    Image as VertexImage,
+    MultiModalEmbeddingModel,
+    MultiModalEmbeddingResponse,
+)
 
 import db_dtypes
-from google.cloud import bigquery
-import pandas as pd
-from vertexai.vision_models import Image, MultiModalEmbeddingModel, MultiModalEmbeddingResponse
-
 
 PROJECT_ID = os.environ.get("PROJECT_ID", "gifted-mountain-415005")
 LOCATION = os.environ.get("LOCATION", "asia-northeast1")
@@ -30,10 +37,9 @@ SUPPORTED_IMAGE_EXTENSIONS = [
     "jpg",
 ]
 MAX_PROMPT_SIZE_MB = float(os.environ.get("MAX_PROMPT_SIZE_MB", "100"))
-
 DATASET_ID = f'{PROJECT_ID}.vector_search'
 CORRECT_TABLE_ID = f"{DATASET_ID}.correct_data"
-INCORRECT_TABLE_ID = f"{DATASET_ID}.incorrect_data"
+
 
 
 
@@ -50,14 +56,13 @@ try:
     logging_client = google.cloud.logging.Client()
     logging_client.setup_logging()
     vertexai.init(project=PROJECT_ID, location=LOCATION)
-    storage_client = storage.Client(project=PROJECT_ID)
+    storage_client = storage.Client()
     txt_model = GenerativeModel("gemini-pro")
     multimodal_model = GenerativeModel("gemini-pro-vision")
     multimodalembedding_model = MultiModalEmbeddingModel.from_pretrained("multimodalembedding")
-    bigquery_client = bigquery.Client(project=PROJECT_ID)
+    bigquery_client = bigquery.Client()
 except Exception as e:
     print(f"An error occurred during the initialization of one or more services: {e}")
-
 
 
 # CSS
@@ -77,7 +82,7 @@ def file_to_base64(file_path: str) -> str:
 
 # GCS ファイルを Base64 にエンコード
 def gcs_file_to_base64(gcs_url: str) -> str:
-    # GCS URLを解析してバケット名とファイルパスを取得
+    # バケット名とファイルパスを取得
     if not gcs_url.startswith("gs://"):
         raise ValueError("URL must start with gs://")
     _, _, bucket_name, *file_path = gcs_url.split("/")
@@ -157,11 +162,14 @@ def get_image_embeddings(
     dimension: Optional[int] = 1408,
 ) -> MultiModalEmbeddingResponse:
 
-    image = Image.load_from_file(location=image_path)
-    embeddings = multimodalembedding_model.get_embeddings(
-        image=image,
-        dimension=dimension,
-    )
+    try:
+        image = VertexImage.load_from_file(location=image_path)
+        embeddings = multimodalembedding_model.get_embeddings(
+            image=image,
+            dimension=dimension,
+        )
+    except Exception as e:
+        logger.error(f"Error during get_image_embeddings: {e}")
 
     return embeddings
 
@@ -235,7 +243,6 @@ def gemini_response(history: str, image_file_path: str, text:str) -> str:
         # 画像/動画ファイルを Cloud Storage にアップロード
         incorrect_image_gcs_uri = file_upload_gsc(file_bucket_name=FILE_BUCKET_NAME, source_file_path=image_file_path)
 
-
         # 不正解画像の埋め込みを取得
         incorrect_embeddings = get_image_embeddings(image_path=incorrect_image_gcs_uri)
 
@@ -266,7 +273,7 @@ def gemini_response(history: str, image_file_path: str, text:str) -> str:
         # 正解の画像 URL
         correct_image_gcs_uri = res_execute_vector_search_query['base_file_path'][0]
 
-        # 正解の料理画像から使われている食材を取得
+        # 正解の料理の食材リストを df で取得
         correct_image_file_name = correct_image_gcs_uri.split('/')[4] # 例）19295.jpg
         correct_image_number = int(correct_image_file_name.split('.')[0]) # 例）19295
 
@@ -403,5 +410,4 @@ with gr.Blocks(css=".gradio-container {background-color: #00CED1;}") as app:
     # クリアボタンが押下されたときの処理
     btn_clear.click(lambda: None, None, queue=False)
 
-app.launch(server_name="0.0.0.0")
-
+app.launch(server_name="0.0.0.0", server_port=7860)
